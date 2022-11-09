@@ -515,3 +515,162 @@ f010009c:   e8 9f ff ff ff          call   f0100040 <test_backtrace>
 
 ### backtrace 函数增加打印文件名、函数名及行号等信息
 
+Exercise 12. Modify your stack backtrace function to display, for each eip, the function name, source file name, and line number corresponding to that eip.
+
+In debuginfo_eip, where do __STAB_* come from? This question has a long answer; to help you to discover the answer, here are some things you might want to do:
+
+1. look in the file kern/kernel.ld for __STAB_*
+2. run objdump -h obj/kern/kernel
+3. run objdump -G obj/kern/kernel
+4. run gcc -pipe -nostdinc -O2 -fno-builtin -I. -MD -Wall -Wno-format -DJOS_KERNEL -gstabs -c -S kern/init.c, and look at init.s.
+
+see if the bootloader loads the symbol table in memory as part of loading the kernel binary
+
+➜  lab git:(lab1)  objdump -h obj/kern/kernel
+
+obj/kern/kernel:     file format elf32-i386
+
+Sections:
+Idx Name          Size      VMA       LMA       File off  Algn
+  0 .text         000019e1  f0100000  00100000  00001000  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  1 .rodata       000006bc  f0101a00  00101a00  00002a00  2**5
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  2 .stab         00003739  f01020bc  001020bc  000030bc  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  3 .stabstr      00001529  f01057f5  001057f5  000067f5  2**0
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  4 .data         00009300  f0107000  00107000  00008000  2**12
+                  CONTENTS, ALLOC, LOAD, DATA
+  5 .got          00000008  f0110300  00110300  00011300  2**2
+                  CONTENTS, ALLOC, LOAD, DATA
+  6 .got.plt      0000000c  f0110308  00110308  00011308  2**2
+                  CONTENTS, ALLOC, LOAD, DATA
+  7 .data.rel.local 00001000  f0111000  00111000  00012000  2**12
+                  CONTENTS, ALLOC, LOAD, DATA
+  8 .data.rel.ro.local 00000044  f0112000  00112000  00013000  2**2
+                  CONTENTS, ALLOC, LOAD, DATA
+  9 .bss          00000661  f0112060  00112060  00013060  2**5
+                  CONTENTS, ALLOC, LOAD, DATA
+ 10 .comment      0000002b  00000000  00000000  000136c1  2**0
+                  CONTENTS, READONLY
+
+➜  lab git:(lab1) objdump -G obj/kern/kernel
+
+obj/kern/kernel:     file format elf32-i386
+
+Contents of .stab section:
+
+Symnum n_type n_othr n_desc n_value  n_strx String
+
+-1     HdrSym 0      1177   00001528 1
+0      SO     0      0      f0100000 1      {standard input}
+1      SOL    0      0      f010000c 18     kern/entry.S
+2      SLINE  0      44     f010000c 0
+3      SLINE  0      57     f0100015 0
+4      SLINE  0      58     f010001a 0
+5      SLINE  0      60     f010001d 0
+6      SLINE  0      61     f0100020 0
+7      SLINE  0      62     f0100025 0
+8      SLINE  0      67     f0100028 0
+9      SLINE  0      68     f010002d 0
+10     SLINE  0      74     f010002f 0
+11     SLINE  0      77     f0100034 0
+12     SLINE  0      80     f0100039 0
+13     SLINE  0      83     f010003e 0
+14     SO     0      2      f0100040 31     kern/entrypgdir.c
+15     OPT    0      0      00000000 49     gcc2_compiled.
+16     GSYM   0      0      00000000 64     entry_pgdir:G(0,1)=ar(0,2)=r(0,2);0;4294967295;;0;1023;(0,3)=(0,4)=(0,5)=r(0,5);0;4294967295;
+17     LSYM   0      0      00000000 158    pde_t:t(0,3)
+18     LSYM   0      0      00000000 171    uint32_t:t(0,4)
+19     LSYM   0      0      00000000 187    unsigned int:t(0,5)
+20     GSYM   0      0      00000000 207    entry_pgtable:G(0,6)=ar(0,2);0;1023;(0,7)=(0,4)
+21     LSYM   0      0      00000000 255    pte_t:t(0,7)
+22     SO     0      0      f0100040 0
+23     SO     0      2      f0100040 268    kern/init.c
+24     OPT    0      0      00000000 49     gcc2_compiled.
+25     FUN    0      0      f0100040 280    test_backtrace:F(0,1)=(0,1)
+26     LSYM   0      0      00000000 308    void:t(0,1)
+27     PSYM   0      0      00000008 320    x:p(0,2)=r(0,2);-2147483648;2147483647;
+28     LSYM   0      0      00000000 360    int:t(0,2)
+
+#### 问题1：debuginfo_eip 函数中的 __STAB_* 来自哪里？
+
+1. __STAB_BEGIN__，__STAB_END__，__STABSTR_BEGIN__, __STABSTR_END__ 等符号均在kern/kern.ld文件定义，它们分别代表 .stab 和 .stabstr 这两个段开始与结束的地址。
+
+        /* Include debugging information in kernel memory */
+        .stab : {
+            PROVIDE(__STAB_BEGIN__ = .);
+            *(.stab);
+            PROVIDE(__STAB_END__ = .);
+            BYTE(0)     /* Force the linker to allocate space
+                    for this section */
+        }
+
+        .stabstr : {
+            PROVIDE(__STABSTR_BEGIN__ = .);
+            *(.stabstr);
+            PROVIDE(__STABSTR_END__ = .);
+            BYTE(0)     /* Force the linker to allocate space
+                    for this section */
+        }
+
+### debuginfo_eip 函数实现根据地址寻找行号的功能
+
+解决这个问题的关键是熟悉 stabs 每行记录的含义。首先，使用 objdump -G obj/kern/kernel > output.md 将内核的符号表信息输出到 output.md 文件， 在 output.md 文件中可以看到以下片段：
+
+Symnum n_type n_othr n_desc n_value  n_strx String
+118    FUN    0      0      f01000a6 2987   i386_init:F(0,25)
+119    SLINE  0      24     00000000 0
+120    SLINE  0      34     00000012 0
+121    SLINE  0      36     00000017 0
+122    SLINE  0      39     0000002b 0
+123    SLINE  0      43     0000003a 0  
+
+这个片段是什么意思呢？首先要理解第一行给出的每列字段的含义：
+
+1. Symnum 是符号索引, 换句话说, 整个符号表看作一个数组, Symnum 是当前符号在数组中的下标
+2. n_type 是符号类型，FUN指函数名，SLINE指在text段中的行号
+3. n_desc 表示在文件中的行号
+4. n_value 表示地址。特别要注意的是, 这里只有 FUN 类型的符号的地址是绝对地址, SLINE符号的地址是偏移量, 其实际地址为函数入口地址加上偏移量。比如第 3 行的含义是地址 f01000b8(=0xf01000a6+0x00000012)对应文件第 34 行。
+
+理解 stabs 每行记录的含义后，调用 stab_binsearch 便能找到某个地址对应的行号了。由于前面的代码已经找到地址在哪个函数里面以及函数入口地址, 将原地址减去函数入口地址即可得到偏移量, 再根据偏移量在符号表中的指定区间查找对应的记录即可。代码如下所示：
+
+    stab_binsearch(stabs, &lfun, &rfun, N_SLINE, addr - info->eip_fn_addr);
+    if (lfun <= rfun)
+    {
+        info->eip_line = stabs[lfun].n_desc;
+    }
+
+### 给内核模拟器增加 backtrace 命令，并在 mon_backtrace 中增加打印文件名、函数名和行号
+
+1. 给内核模拟器增加 backtrace 命令
+
+很简单, 在 kern/monitor.c 文件中模仿已有命令添加即可。
+
+struct Commond {
+    const char * name;
+    const char * desc;
+    // return -1 to force monitor to exit
+    int (*func)(int argc, char** argv, struct Trapframe* tf);
+};
+
+static struct Commond commands[] = {
+    { "help", "Display this list of commands", mon_help },
+    { "kerninfo", "Display information about the kernel", mon_kerninfo },
+    { "backtrace", "Display a backtrace of the function stack", mon_backtrace },
+};
+
+2. 在 mon_backtrace 中增加打印文件名、函数名和行号
+
+经过上面的探索, 这个问题就很容易解决了。在 mon_backtrace 中调用 debuginfo_eip 来获取文件名、函数名和行号即可。注意, 返回的 Eipdebuginfo 结构体的 eip_fn_name 字段除了函数名外还有一段尾巴, 比如test_backtrace:F(0,25), 需要将 ":F(0,25)" 去掉, 可以使用 printf("%.*s", length, string) 来实现。代码如下:
+
+### stabs
+
+1. STABS (Symbol TABle Strings) is a debugging data format for storing information about computer programs for use by symbolic and source-level debuggers.
+2. The assembler creates two custom sections, a section named .stab which contains an array of fixed length structures, one struct per stab, and a section named .stabstr containing all the variable length strings that are referenced by stabs in the .stab section.
+
+### stabstr
+
+The .stabstr section always starts with a null byte (so that string offsets of zero reference a null string), followed by random length strings, each of which is null byte 
+terminated.
